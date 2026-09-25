@@ -1,0 +1,21 @@
+# Exposes CMF externally the same way Kafka/Control Center are exposed -
+# an OpenShift Route on the cluster's apps wildcard domain.
+#
+# termination: passthrough is required (not edge/reencrypt): CMF's
+# client-auth is "want" (optional), but a passthrough route is still what
+# lets curl/CFK's CMFRestClass present a client cert all the way to the
+# CMF pod when they choose to.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: cmf
+  namespace: operator
+spec:
+  host: cmf.apps.redhat.ibm.com
+  to:
+    kind: Service
+    name: cmf-service
+  port:
+    targetPort: cmf-service-https
+  tls:
+    termination: passthrough

@@ -1,0 +1,213 @@
+# Prereqs (run once, from kafka-cc-cmf-tls/certs/):
+#    grep -rl 'apps.redhat.ibm.com' . | xargs sed -i '' 's/apps\.redhat\.ibm\.com/YOUR_DOMAIN_HERE/g'
+#   ./generate-certs.sh  
+#   ./create-secrets.sh   
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: KRaftController
+metadata:
+  name: kraftcontroller
+  namespace: confluent
+spec:
+  dataVolumeCapacity: 10G
+  image:
+    application: docker.io/confluentinc/cp-server:8.3.1
+    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    pullPolicy: IfNotPresent
+    pullSecretRef:
+      - dockerhub-secret
+  replicas: 3
+  podTemplate:
+    podSecurityContext: {}
+  tls:
+    secretRef: tls-kraftcontroller
+  listeners:
+    controller:
+      tls:
+        enabled: true
+      authentication:
+        type: mtls
+        principalMappingRules:
+          - RULE:.*CN[\s]?=[\s]?([a-zA-Z0-9.]*)?.*/$1/
+  dependencies:
+    metricsClient:
+      url: http://controlcenter.confluent.svc.cluster.local:9090
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: confluent
+spec:
+  replicas: 3
+  image:
+    application: docker.io/confluentinc/cp-server:8.3.1
+    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    pullPolicy: IfNotPresent
+    pullSecretRef:
+      - dockerhub-secret
+  dataVolumeCapacity: 50Gi
+  podTemplate:
+    podSecurityContext: {}
+  tls:
+    secretRef: tls-kafka
+  listeners:
+    # "internal" omitted entirely -> defaults to PLAINTEXT, port 9071
+    # (in-cluster only)
+    external:
+      tls:
+        enabled: true
+      authentication:
+        type: mtls
+        principalMappingRules:
+          - RULE:.*CN[\s]?=[\s]?([a-zA-Z0-9.]*)?.*/$1/
+      externalAccess:
+        type: route
+        route:
+          domain: apps.redhat.ibm.com
+  dependencies:
+    kRaftController:
+      clusterRef:
+        name: kraftcontroller
+      controllerListener:
+        tls:
+          enabled: true
+        authentication:
+          type: mtls
+    metricsClient:
+      url: http://controlcenter.confluent.svc.cluster.local:9090
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+metadata:
+  name: connect
+  namespace: confluent
+spec:
+  replicas: 1
+  podTemplate:
+    podSecurityContext: {}
+    # onDemand builds download+install every plugin at pod startup, on
+    # every restart - more plugins means longer build time. Without this,
+    # Kubernetes' default probe interval kills the pod mid-build, which
+    # is what a CrashLoopBackOff during plugin install actually is.
+    probe:
+      liveness:
+        periodSeconds: 400
+        failureThreshold: 1
+        timeoutSeconds: 5
+      readiness:
+        periodSeconds: 400
+        failureThreshold: 5
+        timeoutSeconds: 5
+  build:
+      type: onDemand
+      onDemand:
+          plugins:
+            locationType: confluentHub
+            confluentHub:
+              - name: kafka-connect-datagen
+                owner: confluentinc
+                version: 0.5.2
+              - name: kafka-connect-s3
+                owner: confluentinc
+                version: 12.1.10
+              - name: kafka-connect-jdbc
+                owner: confluentinc
+                version: 10.9.6
+              - name: kafka-connect-mongodb
+                owner: mongodb
+                version: 3.0.1
+  image:
+    application: docker.io/confluentinc/cp-server-connect:8.3.1
+    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    pullPolicy: IfNotPresent
+    pullSecretRef:
+      - dockerhub-secret
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka:9071
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: SchemaRegistry
+metadata:
+  name: schemaregistry
+  namespace: confluent
+spec:
+  replicas: 1
+  podTemplate:
+    podSecurityContext: {}
+  image:
+    application: docker.io/confluentinc/cp-schema-registry:8.3.1
+    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    pullPolicy: IfNotPresent
+    pullSecretRef:
+      - dockerhub-secret
+  mountedSecrets:
+    - secretRef: sr-ssl-jks
+  configOverrides:
+    server:
+      - listeners=http://0.0.0.0:8081,https://0.0.0.0:8082
+      - inter.instance.protocol=https
+      - sni.host.check.enabled=false
+      - config.providers=file
+      - config.providers.file.class=org.apache.kafka.common.config.provider.FileConfigProvider
+      - listener.name.https.ssl.keystore.location=/mnt/secrets/sr-ssl-jks/keystore.jks
+      - listener.name.https.ssl.keystore.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
+      - listener.name.https.ssl.key.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
+      - listener.name.https.ssl.truststore.location=/mnt/secrets/sr-ssl-jks/truststore.jks
+      - listener.name.https.ssl.truststore.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: ControlCenter
+metadata:
+  name: controlcenter
+  namespace: confluent
+spec:
+  replicas: 1
+  image:
+    application: docker.io/confluentinc/cp-enterprise-control-center-next-gen:2.4.0
+    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    pullPolicy: IfNotPresent
+    pullSecretRef:
+      - dockerhub-secret
+  dataVolumeCapacity: 10Gi
+  podTemplate:
+    podSecurityContext: {}
+  tls:
+    secretRef: tls-controlcenter
+  configOverrides:
+   server:
+     - confluent.controlcenter.telemetry.enabled=true
+     - confluent.controlcenter.telemetry.collector.enabled=true
+     - confluent.controlcenter.telemetry.collector.port=4318
+  externalAccess:
+    type: route
+    route:
+      domain: apps.redhat.ibm.com
+  dependencies:
+    schemaRegistry:
+      url: http://schemaregistry.confluent.svc.cluster.local:8081
+    connect:
+    - name: connect
+      url: http://connect.confluent.svc.cluster.local:8083
+    kafka:
+      bootstrapEndpoint: kafka.apps.redhat.ibm.com:443
+      tls:
+        enabled: true
+      authentication:
+        type: mtls
+    prometheusClient:
+      url: http://controlcenter.confluent.svc.cluster.local:9090
+    alertManagerClient:
+      url: http://controlcenter.confluent.svc.cluster.local:9093
+  services:
+    prometheus:
+      image: confluentinc/cp-enterprise-prometheus:2.4.0
+      pvc:
+        dataVolumeCapacity: 10Gi
+    alertmanager:
+      image: confluentinc/cp-enterprise-alertmanager:2.4.0
+---

@@ -1,0 +1,22 @@
+# Tells CFK how to reach CMF (mTLS) if you later add FlinkEnvironment/
+# FlinkApplication CRs. Requires:
+#   - CMF running with cmf-values.yaml (mTLS enabled)
+#   - CFK installed/upgraded with --set enableCMFDay2Ops=true
+#   - the cmf-day2-tls secret from certs/create-secrets.sh
+#
+# Service name/port confirmed via `helm template` against the CMF chart:
+# it always creates a Service named "cmf-service" on port 80 (regardless
+# of helm release name), forwarding to the pod's 8080.
+apiVersion: platform.confluent.io/v1beta1
+kind: CMFRestClass
+metadata:
+  name: default
+  namespace: operator
+spec:
+  cmfRest:
+    endpoint: https://cmf-service.operator.svc.cluster.local:80
+    authentication:
+      type: mtls
+      sslClientAuthentication: true
+    tls:
+      secretRef: cmf-day2-tls

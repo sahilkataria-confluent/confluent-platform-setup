@@ -1,0 +1,19 @@
+{
+  "flinkVersion": "v1_19",
+  "image": "confluentinc/cp-flink-sql:1.19-cp10",
+  "flinkConfiguration": {
+    "execution.checkpointing.interval": "10s"
+  },
+  "taskManager": {
+    "resource": {
+      "cpu": 2,
+      "memory": "2048m"
+    }
+  },
+  "jobManager": {
+    "resource": {
+      "cpu": 2,
+      "memory": "2048m"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+# Helm values for confluentinc/confluent-manager-for-apache-flink (CMF)
+# on OpenShift, with mTLS enabled.
+#
+# Prereqs:
+#   certs/generate-certs.sh   # makes cmf-keystore.jks / cmf-truststore.jks
+#   certs/create-secrets.sh   # loads them as Secrets cmf-keystore/cmf-truststore
+#                              # (in the operator namespace)
+#
+#   helm upgrade --install cmf confluentinc/confluent-manager-for-apache-flink \
+#     -n operator --version "$CMF_CHART_VERSION" -f cmf-values.yaml
+#
+# Docker Hub anonymous pulls are rate-limited - CMF needs the same
+# "dockerhub-secret" already created in the operator namespace (root
+# README.md) or its pod sits in ImagePullBackOff.
+imagePullSecretRef: dockerhub-secret
+
+cmf:
+  ssl:
+    keystore: /opt/keystore/cmf-keystore.jks
+    keystore-password: confluentpass
+    trust-store: /opt/truststore/cmf-truststore.jks
+    trust-store-password: confluentpass
+    # CMF is a Spring Boot app - client-auth follows Spring's
+    # server.ssl.client-auth enum: none/want/need. "want" makes the client
+    # cert optional at the TLS layer: a plain browser can load the UI with
+    # no cert, curl/CFK's CMFRestClass still authenticate via mTLS when
+    # they present one.
+    client-auth: want
+  # No `authentication:` block on purpose - setting authentication.type:
+  # mtls would make CMF require a resolved identity for every request,
+  # which breaks the UI login (no basic-auth/MDS backend configured here).
+  k8s:
+    enabled: true
+
+mountedVolumes:
+  volumeMounts:
+    - name: truststore
+      mountPath: /opt/truststore
+    - name: keystore
+      mountPath: /opt/keystore
+  volumes:
+    - name: truststore
+      secret:
+        secretName: cmf-truststore
+    - name: keystore
+      secret:
+        secretName: cmf-keystore
+
+# OpenShift SCC assigns its own runAsUser/fsGroup - don't fight it.
+podSecurity:
+  securityContext:
+    fsGroup: null
+    runAsUser: null

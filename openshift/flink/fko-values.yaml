@@ -1,0 +1,10 @@
+# Helm values for confluentinc/flink-kubernetes-operator on OpenShift.
+#
+#   helm upgrade --install cp-flink-kubernetes-operator confluentinc/flink-kubernetes-operator \
+#     -n operator --version "$FKO_CHART_VERSION" -f fko-values.yaml
+#
+# Requires cert-manager already installed (provisions FKO's own admission-
+# webhook certs, unrelated to our custom CA/mTLS setup below).
+podSecurityContext:
+  runAsUser: null
+  runAsGroup: null
